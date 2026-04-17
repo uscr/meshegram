@@ -1,0 +1,122 @@
+# Meshegram
+
+[English version](README_En.md)
+
+Двусторонний мост между Meshtastic и Telegram в виде одного небольшого Go-сервиса:
+
+- входящие текстовые сообщения из мешa `meshegram` пересылает в указанный Telegram-чат (канал или группа), добавляя автора, имя канала, TTL и качество сигнала;
+- из того же чата разрешённые пользователи могут слать сообщения обратно в mesh командой `/send`, а командой `/channels` — смотреть список каналов ноды.
+
+Один процесс, одно TCP-подключение к ноде, один Telegram-бот. Конфигурация через переменные окружения.
+
+Связаться с автором: [@uscr0](https://t.me/uscr0)
+
+## Как это выглядит
+
+Входящее из мешa:
+
+```
+📡 home · #LongFast
+👤 Denis (DEN) !43a1b2c0
+2 хопа · SNR -5.2 dB · RSSI -104 dBm
+
+> Привет из мешa!
+```
+
+В ответ в чате:
+
+```
+/send Привет обратно
+```
+
+Или в другой канал:
+
+```
+/send #admin статус ноды?
+```
+
+## Переменные окружения
+
+| Переменная | Обязательна | Описание |
+|---|---|---|
+| `MESHEGRAM_TG_TOKEN` | да | Токен Telegram-бота |
+| `MESHEGRAM_TG_CHAT` | да | ID чата (канал или группа, например `-1001234567890`) |
+| `MESHEGRAM_NODE` | да | Адрес Meshtastic-ноды (`host` или `host:port`, дефолтный порт 4403) |
+| `MESHEGRAM_ALLOWED_USERS` | да | Список разрешённых через запятую. Каждый элемент — либо числовой Telegram ID (`111222333`), либо username (`@uscr0` или просто `uscr0`). Можно смешивать |
+| `MESHEGRAM_NODE_NAME` | нет | Как называть ноду в сообщениях (по умолчанию — её адрес) |
+| `MESHEGRAM_CHANNEL` | нет | Индекс канала по умолчанию для `/send` (0 = primary) |
+| `MESHEGRAM_HOP_LIMIT` | нет | Hop limit для исходящих пакетов (по умолчанию `3`) |
+| `MESHEGRAM_TG_PROXY` | нет | Прокси для Telegram API (`http://`, `https://` или `socks5://host:port`) |
+| `MESHEGRAM_RECONNECT_INTERVAL` | нет | Пауза перед переподключением к ноде (по умолчанию `10s`) |
+| `MESHEGRAM_PREPEND_AUTHOR` | нет | Добавлять ли имя автора к тексту в mesh (`true`/`false`, по умолчанию `true`) |
+
+## Команды бота
+
+| Команда | Где работает | Что делает |
+|---|---|---|
+| `/send <текст>` | DM и группа | Отправить в канал по умолчанию (`MESHEGRAM_CHANNEL`) |
+| `/send #name <текст>` | DM и группа | Отправить в канал с именем `name` (регистр не важен) |
+| `/channels` | DM и группа | Показать список каналов, которые видит нода |
+
+В личке префикс `/send` можно опускать — любой текст летит в канал по умолчанию.
+
+Пользователи вне `MESHEGRAM_ALLOWED_USERS`:
+- в личке получают сообщение об отказе со своим Telegram ID (удобно онбордить — показал боту ID, добавил в whitelist);
+- в группе молча игнорируются.
+
+⚠️ Username в Telegram можно сменить; числовой ID — нет. Если пользователь критически важный и есть шанс, что он решит перелогиниться на другой @handle — лучше whitelist'ить по ID.
+
+ℹ️ В группе админ с включённой опцией «Remain anonymous» приходит с `From = GroupAnonymousBot`, реальное имя скрыто. Meshegram таких отправителей считает разрешёнными автоматически — если сообщение пришло в bridged-чат (`MESHEGRAM_TG_CHAT`), значит автор уже админ этой группы. В mesh-сообщение тогда идёт название группы вместо имени автора.
+
+## Запуск в docker
+
+```bash
+docker run -d --name meshegram --restart=unless-stopped --network=host \
+  -e MESHEGRAM_TG_TOKEN=123:ABC \
+  -e MESHEGRAM_TG_CHAT=-1001234567890 \
+  -e MESHEGRAM_NODE=192.168.10.2:4403 \
+  -e MESHEGRAM_NODE_NAME=home \
+  -e MESHEGRAM_ALLOWED_USERS="@uscr0,123456789" \
+  -e MESHEGRAM_CHANNEL=0 \
+  meshegram:latest
+```
+
+Бот должен быть добавлен в целевой чат:
+
+- в **канал** — админом с правом «Post messages»;
+- в **группу/супергруппу** — обычным участником достаточно; на команды бот реагирует благодаря privacy mode.
+
+## Прокси
+
+Telegram API часто недоступен напрямую. `MESHEGRAM_TG_PROXY` поддерживает схемы `http://`, `https://`, `socks5://` (с опциональной `user:pass@host:port` авторизацией). Если не задан — используются переменные окружения `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`. Подключение к Meshtastic-ноде идёт напрямую по TCP, прокси не используется.
+
+## Сборка контейнера
+
+Multi-arch (`linux/amd64` + `linux/arm64`) из одного Dockerfile:
+
+```bash
+docker buildx create --use --name meshegram 2>/dev/null || true
+
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/uscr0/meshegram:latest \
+  --push .
+```
+
+Замените `ghcr.io/uscr0` на свой registry.
+
+## Локальная сборка
+
+```bash
+go build ./cmd/meshegram
+```
+
+## Подготовка Meshtastic-ноды
+
+- `Network` → `Network Enabled = true`
+- `Network` → `WiFi Mode = Client` (или Ethernet на устройствах с LAN).
+
+Meshtastic держит **одно** TCP-подключение к Network API на ноду. Если параллельно к ней подключен другой клиент (мобильное приложение, веб-клиент, другой бот), handshake зависнет — meshegram это ловит и пишет об этом в лог, переподключение будет автоматом по освобождении.
+
+## Лицензия
+
+GPL-3.0, см. [LICENCE](LICENCE).

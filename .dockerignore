@@ -1,0 +1,9 @@
+.git
+.github
+.gitignore
+.dockerignore
+*.md
+LICENCE
+images
+bin
+dist

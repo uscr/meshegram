@@ -1,0 +1,49 @@
+default:
+  image: docker
+  tags:
+    - docker
+  before_script:
+    - docker info
+
+variables:
+  IMAGE: $CI_REGISTRY_IMAGE/$CI_COMMIT_BRANCH/meshegram:$CI_COMMIT_SHORT_SHA
+  IMAGE_LATEST: $CI_REGISTRY_IMAGE:latest
+  CONTAINER_NAME: meshegram
+
+stages:
+  - build
+  - deploy
+
+build and push:
+  stage: build
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker buildx create --use --name meshegram-builder --driver docker-container || docker buildx use meshegram-builder
+    - docker buildx build --platform linux/amd64,linux/arm64 --push -t $IMAGE -t $IMAGE_LATEST .
+
+deploy:
+  stage: deploy
+  before_script:
+    - 'which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )'
+    - mkdir -p ~/.ssh
+    - eval $(ssh-agent -s)
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    - ssh-add <(echo "$SSH_PRIVATE_KEY")
+  script:
+    - ssh ${DEPLOY_USER}@${DEPLOY_SERVER} "docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY"
+    - ssh ${DEPLOY_USER}@${DEPLOY_SERVER} "docker pull $IMAGE"
+    - ssh ${DEPLOY_USER}@${DEPLOY_SERVER} "docker stop $CONTAINER_NAME || true"
+    - ssh ${DEPLOY_USER}@${DEPLOY_SERVER} "docker rm $CONTAINER_NAME   || true"
+    - >
+        ssh ${DEPLOY_USER}@${DEPLOY_SERVER} "docker run -d --restart always --network=host
+        -e MESHEGRAM_TG_TOKEN=\"$MESHEGRAM_TG_TOKEN\"
+        -e MESHEGRAM_TG_CHAT=\"$MESHEGRAM_TG_CHAT\"
+        -e MESHEGRAM_TG_PROXY=\"$MESHEGRAM_TG_PROXY\"
+        -e MESHEGRAM_NODE=\"$MESHEGRAM_NODE\"
+        -e MESHEGRAM_NODE_NAME=\"$MESHEGRAM_NODE_NAME\"
+        -e MESHEGRAM_ALLOWED_USERS=\"$MESHEGRAM_ALLOWED_USERS\"
+        -e MESHEGRAM_CHANNEL=\"$MESHEGRAM_CHANNEL\"
+        -e MESHEGRAM_HOP_LIMIT=\"$MESHEGRAM_HOP_LIMIT\"
+        --name $CONTAINER_NAME $IMAGE"
+  only:
+    - main
