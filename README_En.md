@@ -55,7 +55,8 @@ Or to a different channel:
 
 | Command | Context | Effect |
 |---|---|---|
-| `/send <text>` | DM and group | Send to the default channel (`MESHEGRAM_CHANNEL`) |
+| `/send <text>` | DM | Send to the default channel (`MESHEGRAM_CHANNEL`) |
+| `/send <text>` | group | Send to the channel of the latest incoming mesh message (falls back to the default) |
 | `/send #name <text>` | DM and group | Send to channel named `name` (case-insensitive) |
 | `/channels` | DM and group | List the channels the node is aware of |
 

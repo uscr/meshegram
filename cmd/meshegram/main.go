@@ -63,15 +63,15 @@ func main() {
 		logx.Error.Fatalf("getMe: %v", err)
 	}
 
-	cache := newMsgCache(msgCacheCapacity)
+	bridge := newBridgeState(msgCacheCapacity, cfg.defaultChannel)
 	onPacket := func(pkt *pb.MeshPacket, state *transport.State) {
-		handleIncomingPacket(ctx, b, cfg, cache, pkt, state)
+		handleIncomingPacket(ctx, b, cfg, bridge, pkt, state)
 	}
 	s := newSession(cfg.nodeAddress, cfg.hopLimit, cfg.reconnectInterval, onPacket)
 
 	b.RegisterHandlerMatchFunc(
 		func(*models.Update) bool { return true },
-		makeHandler(cfg, s, me),
+		makeHandler(cfg, s, me, bridge),
 	)
 
 	logx.Info.Printf("meshegram started: bot=@%s chat=%d node=%s default_channel=%d allowed_users=%d",
@@ -94,9 +94,9 @@ func resolveMe(ctx context.Context, b *bot.Bot) (meInfo, error) {
 	return meInfo{username: u.Username}, nil
 }
 
-func handleIncomingPacket(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCache, pkt *pb.MeshPacket, state *transport.State) {
+func handleIncomingPacket(ctx context.Context, b *bot.Bot, cfg *config, bridge *bridgeState, pkt *pb.MeshPacket, state *transport.State) {
 	if mesh.IsReaction(pkt) {
-		handleReaction(ctx, b, cfg, cache, pkt)
+		handleReaction(ctx, b, cfg, bridge.cache, pkt)
 		return
 	}
 	text := mesh.TextPayload(pkt)
@@ -113,7 +113,8 @@ func handleIncomingPacket(ctx context.Context, b *bot.Bot, cfg *config, cache *m
 		logx.Error.Printf("telegram send: %v", err)
 		return
 	}
-	cache.Put(pkt.Id, sent.ID)
+	bridge.cache.Put(pkt.Id, sent.ID)
+	bridge.SetLastChannel(pkt.Channel)
 }
 
 func handleReaction(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCache, pkt *pb.MeshPacket) {
@@ -192,7 +193,7 @@ func hopPlural(n uint32) string {
 	}
 }
 
-func makeHandler(cfg *config, s *session, me meInfo) bot.HandlerFunc {
+func makeHandler(cfg *config, s *session, me meInfo, bridge *bridgeState) bot.HandlerFunc {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		msg := update.Message
 		if msg == nil || msg.From == nil {
@@ -222,14 +223,14 @@ func makeHandler(cfg *config, s *session, me meInfo) bot.HandlerFunc {
 
 		switch cmd {
 		case sendCommand:
-			handleSend(ctx, b, msg, cfg, s, body, isPrivate)
+			handleSend(ctx, b, msg, cfg, s, bridge, body, isPrivate)
 		case channelsCommand:
 			handleChannels(ctx, b, msg, s)
 		}
 	}
 }
 
-func handleSend(ctx context.Context, b *bot.Bot, msg *models.Message, cfg *config, s *session, body string, isPrivate bool) {
+func handleSend(ctx context.Context, b *bot.Bot, msg *models.Message, cfg *config, s *session, bridge *bridgeState, body string, isPrivate bool) {
 	chanName, text := splitChannelPrefix(body)
 	if text == "" {
 		hint := "ℹ️ Пришлите текст для отправки в mesh."
@@ -241,6 +242,11 @@ func handleSend(ctx context.Context, b *bot.Bot, msg *models.Message, cfg *confi
 	}
 
 	channelIdx := cfg.defaultChannel
+	if !isPrivate {
+		// In the bridged group without an explicit #channel we reply into the
+		// channel of the most recent incoming mesh message.
+		channelIdx = bridge.LastChannel()
+	}
 	if chanName != "" {
 		idx, err := s.ChannelIndexByName(chanName)
 		if err != nil {
