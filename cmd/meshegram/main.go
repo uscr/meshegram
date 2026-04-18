@@ -30,6 +30,9 @@ const (
 	meshTextMaxBytes = 220
 	sendCommand      = "/send"
 	channelsCommand  = "/channels"
+	// How many recent mesh-to-Telegram message mappings to keep for
+	// resolving reactions. Anything older is dropped silently.
+	msgCacheCapacity = 100
 )
 
 type meInfo struct {
@@ -60,8 +63,9 @@ func main() {
 		logx.Error.Fatalf("getMe: %v", err)
 	}
 
+	cache := newMsgCache(msgCacheCapacity)
 	onPacket := func(pkt *pb.MeshPacket, state *transport.State) {
-		handleIncomingPacket(ctx, b, cfg, pkt, state)
+		handleIncomingPacket(ctx, b, cfg, cache, pkt, state)
 	}
 	s := newSession(cfg.nodeAddress, cfg.hopLimit, cfg.reconnectInterval, onPacket)
 
@@ -90,18 +94,53 @@ func resolveMe(ctx context.Context, b *bot.Bot) (meInfo, error) {
 	return meInfo{username: u.Username}, nil
 }
 
-func handleIncomingPacket(ctx context.Context, b *bot.Bot, cfg *config, pkt *pb.MeshPacket, state *transport.State) {
+func handleIncomingPacket(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCache, pkt *pb.MeshPacket, state *transport.State) {
+	if mesh.IsReaction(pkt) {
+		handleReaction(ctx, b, cfg, cache, pkt)
+		return
+	}
 	text := mesh.TextPayload(pkt)
 	if text == "" {
 		return
 	}
 	msg := formatIncoming(cfg.nodeName, pkt, text, state)
-	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
+	sent, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:    cfg.chatID,
 		Text:      msg,
 		ParseMode: models.ParseModeHTML,
-	}); err != nil {
+	})
+	if err != nil {
 		logx.Error.Printf("telegram send: %v", err)
+		return
+	}
+	cache.Put(pkt.Id, sent.ID)
+}
+
+func handleReaction(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCache, pkt *pb.MeshPacket) {
+	dec, ok := pkt.PayloadVariant.(*pb.MeshPacket_Decoded)
+	if !ok || dec.Decoded == nil {
+		return
+	}
+	data := dec.Decoded
+	emoji := strings.TrimSpace(string(data.Payload))
+	if emoji == "" || data.ReplyId == 0 {
+		return
+	}
+	tgMsgID, ok := cache.Get(data.ReplyId)
+	if !ok {
+		// Original message isn't in cache — either never forwarded or evicted.
+		return
+	}
+	_, err := b.SetMessageReaction(ctx, &bot.SetMessageReactionParams{
+		ChatID:    cfg.chatID,
+		MessageID: tgMsgID,
+		Reaction: []models.ReactionType{{
+			Type:              models.ReactionTypeTypeEmoji,
+			ReactionTypeEmoji: &models.ReactionTypeEmoji{Emoji: emoji},
+		}},
+	})
+	if err != nil {
+		logx.Error.Printf("set reaction %q on tg msg %d: %v", emoji, tgMsgID, err)
 	}
 }
 

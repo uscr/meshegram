@@ -106,3 +106,17 @@ func TextPayload(pkt *pb.MeshPacket) string {
 	}
 	return string(dec.Decoded.Payload)
 }
+
+// IsReaction reports whether the packet is a Meshtastic "tapback" reaction
+// (a TEXT_MESSAGE_APP with Data.Emoji set, referencing another message via
+// ReplyId). Such packets are noise when forwarded verbatim to Telegram.
+func IsReaction(pkt *pb.MeshPacket) bool {
+	if pkt == nil {
+		return false
+	}
+	dec, ok := pkt.PayloadVariant.(*pb.MeshPacket_Decoded)
+	if !ok || dec.Decoded == nil {
+		return false
+	}
+	return dec.Decoded.Portnum == pb.PortNum_TEXT_MESSAGE_APP && dec.Decoded.Emoji != 0
+}
