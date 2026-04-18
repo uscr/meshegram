@@ -139,9 +139,14 @@ func handleReaction(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCach
 			ReactionTypeEmoji: &models.ReactionTypeEmoji{Emoji: emoji},
 		}},
 	})
-	if err != nil {
-		logx.Error.Printf("set reaction %q on tg msg %d: %v", emoji, tgMsgID, err)
+	if err == nil {
+		return
 	}
+	if strings.Contains(err.Error(), "REACTION_INVALID") {
+		logx.Info.Printf("reaction %q is not in Telegram's allowed set, skipping (tg msg %d)", emoji, tgMsgID)
+		return
+	}
+	logx.Error.Printf("set reaction %q on tg msg %d: %v", emoji, tgMsgID, err)
 }
 
 func formatIncoming(nodeName string, pkt *pb.MeshPacket, text string, state *transport.State) string {
