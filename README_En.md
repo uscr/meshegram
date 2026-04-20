@@ -5,7 +5,7 @@
 A two-way Meshtastic ↔ Telegram bridge in a single small Go service:
 
 - text messages from the mesh are forwarded into a Telegram chat (channel or group) with author, channel name, TTL and signal quality;
-- tapback reactions in the mesh attach as Telegram reactions to the matching message in the chat; emojis Telegram rejects as native reactions are appended as a `reactions: …` line to the original forward via message edit;
+- tapback reactions in the mesh are appended as a `reactions: …` line to the original forward via message edit (native Telegram reactions aren't used — a bot can only set one reaction per message and each new one would overwrite the previous);
 - whitelisted users in the same chat can reply back into the mesh with `/send`, or list the node's channels with `/channels`.
 
 One process, one TCP connection to the node, one Telegram bot. Configured entirely through environment variables.

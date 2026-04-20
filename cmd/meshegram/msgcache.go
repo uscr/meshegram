@@ -4,8 +4,7 @@ import "sync"
 
 // msgEntry is the per-message state we keep for a bridged mesh message:
 // the Telegram message ID, the HTML body we originally sent, and any
-// "fallback" emoji reactions we've appended via editMessageText because
-// Telegram refused them as native reactions.
+// emoji reactions we've appended via editMessageText.
 type msgEntry struct {
 	tgID      int
 	body      string
@@ -50,36 +49,24 @@ func (c *msgCache) Put(meshID uint32, tgID int, body string) {
 	c.order = append(c.order, meshID)
 }
 
-func (c *msgCache) Get(meshID uint32) (int, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.m[meshID]
-	if !ok {
-		return 0, false
-	}
-	return e.tgID, true
-}
-
-// AddFallbackReaction records an emoji reaction Telegram refused as a
-// native reaction. Emojis are deduplicated in first-seen order. Returns
-// a copy of the updated entry and whether the mesh message is still
-// cached.
-func (c *msgCache) AddFallbackReaction(meshID uint32, emoji string) (tgID int, body string, reactions []string, ok bool) {
+// AddReaction appends an emoji to the reaction list for the given mesh
+// message, deduplicated in first-seen order. Returns the Telegram
+// message ID, the HTML body we originally sent, and the updated reaction
+// list. `added` reports whether the emoji was actually new — false if
+// the mesh message isn't cached or the emoji was already present, in
+// which case the caller should skip editing.
+func (c *msgCache) AddReaction(meshID uint32, emoji string) (tgID int, body string, reactions []string, added bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.m[meshID]
 	if !ok {
 		return 0, "", nil, false
 	}
-	found := false
 	for _, r := range e.reactions {
 		if r == emoji {
-			found = true
-			break
+			return 0, "", nil, false
 		}
 	}
-	if !found {
-		e.reactions = append(e.reactions, emoji)
-	}
+	e.reactions = append(e.reactions, emoji)
 	return e.tgID, e.body, append([]string(nil), e.reactions...), true
 }

@@ -123,6 +123,10 @@ func handleIncomingPacket(ctx context.Context, b *bot.Bot, cfg *config, bridge *
 	bridge.SetLastChannel(pkt.Channel)
 }
 
+// handleReaction appends mesh tapback emojis to the corresponding bridged
+// Telegram message by editing it in place with a "reactions: …" footer.
+// Native Telegram reactions aren't used: a bot can set only one reaction
+// per message, so each new emoji would overwrite the previous one.
 func handleReaction(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCache, pkt *pb.MeshPacket) {
 	dec, ok := pkt.PayloadVariant.(*pb.MeshPacket_Decoded)
 	if !ok || dec.Decoded == nil {
@@ -133,35 +137,10 @@ func handleReaction(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCach
 	if emoji == "" || data.ReplyId == 0 {
 		return
 	}
-	tgMsgID, ok := cache.Get(data.ReplyId)
-	if !ok {
-		// Original message isn't in cache — either never forwarded or evicted.
-		return
-	}
-	_, err := b.SetMessageReaction(ctx, &bot.SetMessageReactionParams{
-		ChatID:    cfg.chatID,
-		MessageID: tgMsgID,
-		Reaction: []models.ReactionType{{
-			Type:              models.ReactionTypeTypeEmoji,
-			ReactionTypeEmoji: &models.ReactionTypeEmoji{Emoji: emoji},
-		}},
-	})
-	if err == nil {
-		return
-	}
-	if strings.Contains(err.Error(), "REACTION_INVALID") {
-		appendFallbackReaction(ctx, b, cfg, cache, data.ReplyId, emoji, tgMsgID)
-		return
-	}
-	logx.Error.Printf("set reaction %q on tg msg %d: %v", emoji, tgMsgID, err)
-}
-
-// appendFallbackReaction renders the original forwarded message with an
-// inline "reactions: …" footer and edits the Telegram message in place. Used
-// when Telegram rejected the emoji for its native reaction API.
-func appendFallbackReaction(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCache, meshID uint32, emoji string, tgMsgID int) {
-	_, body, reactions, ok := cache.AddFallbackReaction(meshID, emoji)
-	if !ok {
+	tgMsgID, body, reactions, added := cache.AddReaction(data.ReplyId, emoji)
+	if !added {
+		// Either the original message isn't cached (never forwarded or
+		// evicted) or this emoji was already present — nothing to do.
 		return
 	}
 	text := body + "\n<i>reactions: " + html.EscapeString(strings.Join(reactions, " ")) + "</i>"
@@ -172,7 +151,7 @@ func appendFallbackReaction(ctx context.Context, b *bot.Bot, cfg *config, cache 
 		ParseMode: models.ParseModeHTML,
 	})
 	if err != nil {
-		logx.Error.Printf("edit tg msg %d for fallback reaction %q: %v", tgMsgID, emoji, err)
+		logx.Error.Printf("edit tg msg %d for reaction %q: %v", tgMsgID, emoji, err)
 	}
 }
 
