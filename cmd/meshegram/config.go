@@ -3,23 +3,28 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type config struct {
-	botToken          string
-	chatID            int64
-	proxyURL          string
-	allowedIDs        map[int64]struct{}
-	allowedUsernames  map[string]struct{}
-	nodeName          string
-	nodeAddress       string
-	defaultChannel    uint32
-	hopLimit          uint32
-	reconnectInterval time.Duration
-	prependAuthor     bool
+	botToken            string
+	chatID              int64
+	proxyURL            string
+	allowedIDs          map[int64]struct{}
+	allowedUsernames    map[string]struct{}
+	nodeName            string
+	nodeAddress         string
+	defaultChannel      uint32
+	hopLimit            uint32
+	reconnectInterval   time.Duration
+	prependAuthor       bool
+	onlyChannels        map[string]struct{}
+	ignoreChannels      map[string]struct{}
+	onlyMessageRegexp   *regexp.Regexp
+	ignoreMessageRegexp *regexp.Regexp
 }
 
 func (c *config) allowedCount() int {
@@ -115,5 +120,75 @@ func loadConfig() (*config, error) {
 		cfg.prependAuthor = v
 	}
 
+	cfg.onlyChannels = parseChannelSet("MESHEGRAM_ONLY_CHANNEL")
+	cfg.ignoreChannels = parseChannelSet("MESHEGRAM_IGNORE_CHANNEL")
+	if cfg.onlyMessageRegexp, err = parseMessageRegexp("MESHEGRAM_ONLY_MESSAGE_REGEXP"); err != nil {
+		return nil, err
+	}
+	if cfg.ignoreMessageRegexp, err = parseMessageRegexp("MESHEGRAM_IGNORE_MESSAGE_REGEXP"); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
+}
+
+// parseChannelSet reads a comma-separated list of channel names from env and
+// returns a set keyed by lowercased name (leading "#" stripped). Returns nil
+// when the variable is unset or empty — the caller treats nil as "no filter".
+func parseChannelSet(env string) map[string]struct{} {
+	raw := os.Getenv(env)
+	if raw == "" {
+		return nil
+	}
+	out := make(map[string]struct{})
+	for _, s := range strings.Split(raw, ",") {
+		name := strings.TrimSpace(s)
+		name = strings.TrimPrefix(name, "#")
+		if name == "" {
+			continue
+		}
+		out[strings.ToLower(name)] = struct{}{}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func parseMessageRegexp(env string) (*regexp.Regexp, error) {
+	raw := os.Getenv(env)
+	if raw == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s %q: %w", env, raw, err)
+	}
+	return re, nil
+}
+
+// channelAllowed applies the ONLY/IGNORE channel filters. Name matching is
+// case-insensitive and "#" prefixes are ignored.
+func (c *config) channelAllowed(name string) bool {
+	lower := strings.ToLower(strings.TrimPrefix(name, "#"))
+	if len(c.onlyChannels) > 0 {
+		if _, ok := c.onlyChannels[lower]; !ok {
+			return false
+		}
+	}
+	if _, ok := c.ignoreChannels[lower]; ok {
+		return false
+	}
+	return true
+}
+
+// messageAllowed applies the ONLY/IGNORE regexp filters to a message text.
+func (c *config) messageAllowed(text string) bool {
+	if c.onlyMessageRegexp != nil && !c.onlyMessageRegexp.MatchString(text) {
+		return false
+	}
+	if c.ignoreMessageRegexp != nil && c.ignoreMessageRegexp.MatchString(text) {
+		return false
+	}
+	return true
 }

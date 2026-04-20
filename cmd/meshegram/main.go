@@ -95,12 +95,18 @@ func resolveMe(ctx context.Context, b *bot.Bot) (meInfo, error) {
 }
 
 func handleIncomingPacket(ctx context.Context, b *bot.Bot, cfg *config, bridge *bridgeState, pkt *pb.MeshPacket, state *transport.State) {
+	if !cfg.channelAllowed(mesh.ChannelName(pkt.Channel, state)) {
+		return
+	}
 	if mesh.IsReaction(pkt) {
 		handleReaction(ctx, b, cfg, bridge.cache, pkt)
 		return
 	}
 	text := mesh.TextPayload(pkt)
 	if text == "" {
+		return
+	}
+	if !cfg.messageAllowed(text) {
 		return
 	}
 	msg := formatIncoming(cfg.nodeName, pkt, text, state)

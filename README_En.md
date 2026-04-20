@@ -50,6 +50,12 @@ Or to a different channel:
 | `MESHEGRAM_TG_PROXY` | no | Proxy for the Telegram API (`http://`, `https://` or `socks5://host:port`) |
 | `MESHEGRAM_RECONNECT_INTERVAL` | no | Delay before reconnecting to the node (default `10s`) |
 | `MESHEGRAM_PREPEND_AUTHOR` | no | Prepend the author name to the mesh payload (`true`/`false`, default `true`) |
+| `MESHEGRAM_ONLY_CHANNEL` | no | Comma-separated channel allowlist (e.g. `LongFast,admin`). When set, only messages and reactions from the listed channels are forwarded. Case-insensitive; the leading `#` is optional |
+| `MESHEGRAM_IGNORE_CHANNEL` | no | Comma-separated channel blocklist. Applied on top of `MESHEGRAM_ONLY_CHANNEL` |
+| `MESHEGRAM_ONLY_MESSAGE_REGEXP` | no | Go [`regexp`](https://pkg.go.dev/regexp/syntax) pattern. When set, only messages whose text matches are forwarded |
+| `MESHEGRAM_IGNORE_MESSAGE_REGEXP` | no | Regexp pattern. Messages whose text matches are dropped. Applied on top of `MESHEGRAM_ONLY_MESSAGE_REGEXP` |
+
+Any of the four variables may be empty or unset, meaning "no filter". Channel filters also apply to reactions; message-regexp filters only apply to plain messages.
 
 ## Commands
 
