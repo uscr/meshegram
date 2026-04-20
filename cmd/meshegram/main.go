@@ -109,17 +109,17 @@ func handleIncomingPacket(ctx context.Context, b *bot.Bot, cfg *config, bridge *
 	if !cfg.messageAllowed(text) {
 		return
 	}
-	msg := formatIncoming(cfg.nodeName, pkt, text, state)
+	body := formatIncoming(cfg.nodeName, pkt, text, state)
 	sent, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:    cfg.chatID,
-		Text:      msg,
+		Text:      body,
 		ParseMode: models.ParseModeHTML,
 	})
 	if err != nil {
 		logx.Error.Printf("telegram send: %v", err)
 		return
 	}
-	bridge.cache.Put(pkt.Id, sent.ID)
+	bridge.cache.Put(pkt.Id, sent.ID, body)
 	bridge.SetLastChannel(pkt.Channel)
 }
 
@@ -150,10 +150,30 @@ func handleReaction(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCach
 		return
 	}
 	if strings.Contains(err.Error(), "REACTION_INVALID") {
-		logx.Info.Printf("reaction %q is not in Telegram's allowed set, skipping (tg msg %d)", emoji, tgMsgID)
+		appendFallbackReaction(ctx, b, cfg, cache, data.ReplyId, emoji, tgMsgID)
 		return
 	}
 	logx.Error.Printf("set reaction %q on tg msg %d: %v", emoji, tgMsgID, err)
+}
+
+// appendFallbackReaction renders the original forwarded message with an
+// inline "reactions: …" footer and edits the Telegram message in place. Used
+// when Telegram rejected the emoji for its native reaction API.
+func appendFallbackReaction(ctx context.Context, b *bot.Bot, cfg *config, cache *msgCache, meshID uint32, emoji string, tgMsgID int) {
+	_, body, reactions, ok := cache.AddFallbackReaction(meshID, emoji)
+	if !ok {
+		return
+	}
+	text := body + "\n<i>reactions: " + html.EscapeString(strings.Join(reactions, " ")) + "</i>"
+	_, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    cfg.chatID,
+		MessageID: tgMsgID,
+		Text:      text,
+		ParseMode: models.ParseModeHTML,
+	})
+	if err != nil {
+		logx.Error.Printf("edit tg msg %d for fallback reaction %q: %v", tgMsgID, emoji, err)
+	}
 }
 
 func formatIncoming(nodeName string, pkt *pb.MeshPacket, text string, state *transport.State) string {
